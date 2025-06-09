@@ -1,0 +1,187 @@
+<?php
+
+namespace App\Console\Commands;
+
+use Illuminate\Console\Command;
+use App\Models\Sale;
+use App\Models\SaleItem;
+use App\Models\Product;
+use App\Models\Client;
+use App\Models\User;
+use Illuminate\Support\Facades\DB;
+
+class TestSalesSystem extends Command
+{
+    protected $signature = 'test:sales-system';
+    protected $description = 'Test the sales system completely';
+
+    public function handle()
+    {
+        $this->info('🧪 Testing Sales System...');
+        $this->newLine();
+
+        // Test 1: Check database tables
+        $this->info('1. Checking database tables...');
+        $this->checkTables();
+        $this->newLine();
+
+        // Test 2: Check data availability
+        $this->info('2. Checking data availability...');
+        $this->checkData();
+        $this->newLine();
+
+        // Test 3: Test sale creation
+        $this->info('3. Testing sale creation...');
+        $this->testSaleCreation();
+        $this->newLine();
+
+        // Test 4: Check relationships
+        $this->info('4. Testing relationships...');
+        $this->testRelationships();
+        $this->newLine();
+
+        $this->info('✅ Sales system test completed!');
+        return 0;
+    }
+
+    private function checkTables()
+    {
+        $tables = ['sales', 'sale_items', 'products', 'clients', 'users'];
+        
+        foreach ($tables as $table) {
+            if (DB::getSchemaBuilder()->hasTable($table)) {
+                $count = DB::table($table)->count();
+                $this->line("   ✅ Table '{$table}' exists with {$count} records");
+            } else {
+                $this->error("   ❌ Table '{$table}' does not exist!");
+            }
+        }
+    }
+
+    private function checkData()
+    {
+        // Check products with stock
+        $productsWithStock = Product::where('stock_quantity', '>', 0)->count();
+        $this->line("   📦 Products with stock: {$productsWithStock}");
+        
+        if ($productsWithStock === 0) {
+            $this->warn("   ⚠️  No products with stock available!");
+        }
+
+        // Check active clients
+        $activeClients = Client::where('active', true)->count();
+        $this->line("   👥 Active clients: {$activeClients}");
+
+        // Check users
+        $users = User::count();
+        $this->line("   👤 Users: {$users}");
+
+        // Check recent sales
+        $recentSales = Sale::where('created_at', '>=', now()->subDays(7))->count();
+        $this->line("   💰 Sales in last 7 days: {$recentSales}");
+    }
+
+    private function testSaleCreation()
+    {
+        try {
+            // Get test data
+            $user = User::first();
+            $client = Client::where('active', true)->first();
+            $product = Product::where('stock_quantity', '>', 0)->first();
+
+            if (!$user || !$product) {
+                $this->error('   ❌ Missing test data (user or product)');
+                return;
+            }
+
+            $originalStock = $product->stock_quantity;
+
+            DB::beginTransaction();
+
+            // Create test sale
+            $sale = Sale::create([
+                'client_id' => $client?->id,
+                'user_id' => $user->id,
+                'subtotal' => $product->selling_price,
+                'tax_amount' => $product->selling_price * 0.20,
+                'discount_amount' => 0,
+                'total_amount' => $product->selling_price * 1.20,
+                'payment_method' => 'cash',
+                'payment_status' => 'paid',
+                'has_prescription' => false,
+                'sale_date' => now(),
+            ]);
+
+            $this->line("   ✅ Sale created with ID: {$sale->id}");
+            $this->line("   📄 Sale number: {$sale->sale_number}");
+
+            // Create sale item
+            $saleItem = SaleItem::create([
+                'sale_id' => $sale->id,
+                'product_id' => $product->id,
+                'quantity' => 1,
+                'unit_price' => $product->selling_price,
+                'total_price' => $product->selling_price,
+            ]);
+
+            $this->line("   ✅ Sale item created with ID: {$saleItem->id}");
+
+            // Test stock update
+            $product->decrement('stock_quantity', 1);
+            $newStock = $product->fresh()->stock_quantity;
+            
+            if ($newStock === $originalStock - 1) {
+                $this->line("   ✅ Stock updated correctly: {$originalStock} → {$newStock}");
+            } else {
+                $this->error("   ❌ Stock not updated correctly: {$originalStock} → {$newStock}");
+            }
+
+            DB::rollback(); // Rollback test data
+            $this->line("   🔄 Test data rolled back");
+
+        } catch (\Exception $e) {
+            DB::rollback();
+            $this->error("   ❌ Sale creation failed: " . $e->getMessage());
+            $this->line("   🔍 Error trace: " . $e->getFile() . ':' . $e->getLine());
+        }
+    }
+
+    private function testRelationships()
+    {
+        $sale = Sale::with(['client', 'user', 'saleItems.product'])->first();
+        
+        if (!$sale) {
+            $this->warn('   ⚠️  No sales found to test relationships');
+            return;
+        }
+
+        $this->line("   🔗 Testing sale ID: {$sale->id}");
+        
+        // Test client relationship
+        if ($sale->client) {
+            $this->line("   ✅ Client relationship: {$sale->client->full_name}");
+        } else {
+            $this->line("   ℹ️  No client for this sale (anonymous)");
+        }
+
+        // Test user relationship
+        if ($sale->user) {
+            $this->line("   ✅ User relationship: {$sale->user->name}");
+        } else {
+            $this->error("   ❌ Missing user relationship");
+        }
+
+        // Test sale items
+        $itemsCount = $sale->saleItems->count();
+        $this->line("   ✅ Sale items: {$itemsCount}");
+
+        // Test product relationships in items
+        foreach ($sale->saleItems as $item) {
+            if ($item->product) {
+                $this->line("   ✅ Item product: {$item->product->name}");
+            } else {
+                $this->error("   ❌ Missing product for sale item ID: {$item->id}");
+            }
+        }
+    }
+}
