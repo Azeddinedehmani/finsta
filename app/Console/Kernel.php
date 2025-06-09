@@ -31,6 +31,8 @@ class Kernel extends HttpKernel
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
             // AJOUT du middleware d'activité dans le groupe web
             \App\Http\Middleware\LogActivity::class,
+            // AJOUT du middleware de notifications
+            \App\Http\Middleware\NotificationMiddleware::class,
         ],
 
         'api' => [
@@ -55,5 +57,7 @@ class Kernel extends HttpKernel
         'verified' => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
         'admin' => \App\Http\Middleware\AdminMiddleware::class,
         'pharmacist' => \App\Http\Middleware\PharmacistMiddleware::class,
+        // AJOUT d'alias pour les nouveaux middlewares
+        'notifications' => \App\Http\Middleware\NotificationMiddleware::class,
     ];
 }

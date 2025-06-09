@@ -1,5 +1,5 @@
 <?php
-// resources/views/pharmacist/dashboard.blade.php - Updated with real data
+// resources/views/pharmacist/dashboard.blade.php - Updated with real data and null product fix
 ?>
 @extends('layouts.app')
 
@@ -33,8 +33,10 @@
                               ->where('expiry_date', '>', now())
                               ->count();
     
-    // Recent sales for table
-    $recentSales = Sale::with(['client', 'user', 'saleItems.product'])
+    // Recent sales for table - FIXED: Only load sales with existing products
+    $recentSales = Sale::with(['client', 'user', 'saleItems' => function($query) {
+                        $query->whereHas('product'); // Only load items that have existing products
+                    }, 'saleItems.product'])
                       ->latest('sale_date')
                       ->take(5)
                       ->get();
@@ -215,16 +217,38 @@
                                     <td>
                                         @if($sale->client)
                                             {{ $sale->client->full_name }}
+                                        @elseif($sale->client_display_name)
+                                            {{ $sale->client_display_name }}
                                         @else
                                             <span class="text-muted">Client anonyme</span>
                                         @endif
                                     </td>
                                     <td>
+                                        @php
+                                            // Filter out sale items with null products
+                                            $validSaleItems = $sale->saleItems->filter(function($item) {
+                                                return $item->product !== null;
+                                            });
+                                            $totalItems = $sale->saleItems->count();
+                                            $validItemsCount = $validSaleItems->count();
+                                            $deletedItemsCount = $totalItems - $validItemsCount;
+                                        @endphp
+                                        
                                         <span class="badge bg-light text-dark">
-                                            {{ $sale->saleItems->count() }} produit(s)
+                                            {{ $totalItems }} produit(s)
                                         </span>
-                                        @if($sale->saleItems->first())
-                                            <br><small class="text-muted">{{ $sale->saleItems->first()->product->name }}{{ $sale->saleItems->count() > 1 ? '...' : '' }}</small>
+                                        
+                                        @if($validSaleItems->isNotEmpty())
+                                            <br><small class="text-muted">
+                                                {{ $validSaleItems->first()->product->name }}{{ $totalItems > 1 ? '...' : '' }}
+                                            </small>
+                                        @endif
+                                        
+                                        @if($deletedItemsCount > 0)
+                                            <br><small class="text-danger">
+                                                <i class="fas fa-exclamation-triangle me-1"></i>
+                                                {{ $deletedItemsCount }} produit(s) supprimé(s)
+                                            </small>
                                         @endif
                                     </td>
                                     <td>
@@ -246,12 +270,14 @@
                                         <br><small class="text-muted">{{ $sale->sale_date->diffForHumans() }}</small>
                                     </td>
                                     <td>
-                                        <a href="{{ route('sales.show', $sale->id) }}" class="btn btn-sm btn-info text-white" title="Voir">
-                                            <i class="fas fa-eye"></i>
-                                        </a>
-                                        <a href="{{ route('sales.print', $sale->id) }}" class="btn btn-sm btn-primary" title="Imprimer">
-                                            <i class="fas fa-print"></i>
-                                        </a>
+                                        <div class="btn-group" role="group">
+                                            <a href="{{ route('sales.show', $sale->id) }}" class="btn btn-sm btn-info text-white" title="Voir">
+                                                <i class="fas fa-eye"></i>
+                                            </a>
+                                            <a href="{{ route('sales.print', $sale->id) }}" class="btn btn-sm btn-primary" title="Imprimer">
+                                                <i class="fas fa-print"></i>
+                                            </a>
+                                        </div>
                                     </td>
                                 </tr>
                                 @endforeach
@@ -306,4 +332,76 @@
     </div>
 </div>
 @endif
+
+{{-- Debug info for development (remove in production) --}}
+@if(config('app.debug'))
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card border-warning">
+            <div class="card-header bg-warning">
+                <h6 class="mb-0"><i class="fas fa-bug me-2"></i>Informations de débogage (mode développement)</h6>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Données chargées :</h6>
+                        <ul class="list-unstyled">
+                            <li><strong>Ventes récentes :</strong> {{ $recentSales->count() }}</li>
+                            <li><strong>Produits stock faible :</strong> {{ $lowStockProductsList->count() }}</li>
+                            <li><strong>Ventes aujourd'hui :</strong> {{ $salesCountToday }}</li>
+                            <li><strong>Montant total :</strong> {{ number_format($salesToday, 2) }} €</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Vérifications :</h6>
+                        <ul class="list-unstyled">
+                            @foreach($recentSales as $sale)
+                                @php
+                                    $validItems = $sale->saleItems->filter(fn($item) => $item->product !== null)->count();
+                                    $totalItems = $sale->saleItems->count();
+                                @endphp
+                                <li><small>Vente #{{ $sale->sale_number }}: {{ $validItems }}/{{ $totalItems }} produits valides</small></li>
+                            @endforeach
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+@endif
+
+@endsection
+
+@section('scripts')
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Auto-refresh dashboard data every 5 minutes
+    setInterval(function() {
+        if (document.visibilityState === 'visible') {
+            // Only refresh if the page is visible
+            window.location.reload();
+        }
+    }, 300000); // 5 minutes
+
+    // Add hover effects to quick access buttons
+    const quickAccessButtons = document.querySelectorAll('.btn.py-4');
+    quickAccessButtons.forEach(button => {
+        button.addEventListener('mouseenter', function() {
+            this.style.transform = 'scale(1.05)';
+            this.style.transition = 'all 0.3s ease';
+        });
+        
+        button.addEventListener('mouseleave', function() {
+            this.style.transform = 'scale(1)';
+        });
+    });
+
+    // Initialize tooltips
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[title]'));
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
+});
+</script>
 @endsection
